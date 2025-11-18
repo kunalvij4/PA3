@@ -41,6 +41,11 @@ int main(int argc, char *argv[])
 
     // Main shell loop
     char command[MAX_CMD_LEN];
+    static char read_buffer[MAX_CMD_LEN];
+    static int buffer_pos = 0;
+    static int buffer_len = 0;
+    int input_fd = fileno(input);
+
     while (1)
     {
         // Print prompt in interactive mode
@@ -51,19 +56,51 @@ int main(int argc, char *argv[])
         }
 
         // Read command using read() as required
-        char *result = fgets(command, sizeof(command), input);
-        if (!result)
+        int cmd_pos = 0;
+        int found_newline = 0;
+
+        while (!found_newline && cmd_pos < MAX_CMD_LEN - 1)
         {
-            // EOF reached
+            // If buffer is empty, read more data
+            if (buffer_pos >= buffer_len)
+            {
+                ssize_t bytes_read = read(input_fd, read_buffer, sizeof(read_buffer));
+                if (bytes_read <= 0)
+                {
+                    // EOF or error
+                    if (cmd_pos == 0)
+                    {
+                        // No partial command, exit loop
+                        found_newline = -1; // Signal EOF
+                        break;
+                    }
+                    // We have a partial command without newline, treat as complete
+                    break;
+                }
+                buffer_len = bytes_read;
+                buffer_pos = 0;
+            }
+
+            // Process one character from buffer
+            char c = read_buffer[buffer_pos++];
+
+            if (c == '\n')
+            {
+                found_newline = 1;
+                break;
+            }
+
+            command[cmd_pos++] = c;
+        }
+
+        // Check for EOF
+        if (found_newline == -1)
+        {
             break;
         }
 
-        // Remove trailing newline
-        size_t len = strlen(command);
-        if (len > 0 && command[len - 1] == '\n')
-        {
-            command[len - 1] = '\0';
-        }
+        // Null-terminate the command
+        command[cmd_pos] = '\0';
 
         // Skip empty commands
         if (strlen(command) == 0)
@@ -71,20 +108,67 @@ int main(int argc, char *argv[])
             continue;
         }
 
-        // TODO: Parse and execute command
-        printf("You entered: %s\n", command);
+        // Handle built-in commands
+        // Parse command into tokens for argument handling
+        char *tokens[MAX_CMD_LEN];
+        int token_count = 0;
+        char cmd_copy[MAX_CMD_LEN];
+        strcpy(cmd_copy, command);
 
-        // Check for exit command
-        if (strcmp(command, "exit") == 0)
+        char *token = strtok(cmd_copy, " \t");
+        while (token != NULL && token_count < MAX_CMD_LEN - 1)
+        {
+            tokens[token_count++] = token;
+            token = strtok(NULL, " \t");
+        }
+        tokens[token_count] = NULL;
+
+        if (token_count == 0)
+        {
+            continue;
+        }
+
+        if (strcmp(tokens[0], "pwd") == 0)
+        {
+            char cwd[MAX_CMD_LEN];
+            if (getcwd(cwd, sizeof(cwd)) != NULL)
+            {
+                printf("%s\n", cwd);
+            }
+            else
+            {
+                perror("pwd");
+            }
+        }
+        else if (strcmp(tokens[0], "cd") == 0)
+        {
+            if (token_count != 2)
+            {
+                fprintf(stderr, "cd: wrong number of arguments\n");
+            }
+            else
+            {
+                if (chdir(tokens[1]) != 0)
+                {
+                    perror("cd");
+                }
+            }
+        }
+        else if (strcmp(tokens[0], "exit") == 0)
         {
             break;
+        }
+        else
+        {
+            // TODO: Parse and execute external commands
+            printf("You entered: %s\n", command);
         }
     }
 
     // Print goodbye message in interactive mode
     if (interactive_mode)
     {
-        printf("mysh: exiting\n");
+        printf("Exiting my shell.\n");
     }
 
     // Close file if we opened one
